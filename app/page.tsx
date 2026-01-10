@@ -131,6 +131,12 @@ const STATUS_TRANSLATIONS: Record<
 };
 
 export default function OrderManagement() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   console.log(orders);
   const [searchQuery, setSearchQuery] = useState("");
@@ -160,6 +166,68 @@ export default function OrderManagement() {
   }>({
     isOpen: false,
   });
+
+  // Check for existing authentication session on mount
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setIsAuthenticated(true);
+        }
+      } catch (error) {
+        console.error("Error checking auth:", error);
+      } finally {
+        setIsAuthLoading(false);
+      }
+    }
+    
+    checkAuth();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoggingIn(true);
+    setAuthError("");
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: passwordInput,
+      });
+
+      if (error) {
+        setAuthError(error.message);
+        setPasswordInput("");
+      } else if (data.session) {
+        setIsAuthenticated(true);
+        setAuthError("");
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      setAuthError("An unexpected error occurred. Please try again.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setEmail("");
+      setPasswordInput("");
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
 
   // Transform Supabase order to Order type
   const transformSupabaseOrder = (supabaseOrder: SupabaseOrder): Order => {
@@ -614,6 +682,81 @@ export default function OrderManagement() {
     }
   };
 
+  // Show loading while checking authentication
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="w-full max-w-md p-8">
+          <div className="bg-card border rounded-lg shadow-lg p-8">
+            <div className="flex items-center justify-center gap-3 mb-6">
+              <Package className="h-10 w-10 text-primary" />
+              <h1 className="text-3xl font-bold">Backoffice</h1>
+            </div>
+            <p className="text-center text-muted-foreground mb-8">
+              Sign in to access the order management system
+            </p>
+            <form onSubmit={handlePasswordSubmit}>
+              <div className="space-y-4">
+                <div>
+                  <Input
+                    type="email"
+                    placeholder="Email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setAuthError("");
+                    }}
+                    disabled={isLoggingIn}
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <Input
+                    type="password"
+                    placeholder="Password"
+                    value={passwordInput}
+                    onChange={(e) => {
+                      setPasswordInput(e.target.value);
+                      setAuthError("");
+                    }}
+                    disabled={isLoggingIn}
+                  />
+                </div>
+                {authError && (
+                  <p className="text-red-500 text-sm">
+                    {authError}
+                  </p>
+                )}
+                <Button type="submit" className="w-full" disabled={isLoggingIn}>
+                  {isLoggingIn ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <TooltipProvider>
@@ -689,16 +832,24 @@ export default function OrderManagement() {
               </Tooltip>
               <Button variant="outline"> Flight </Button>
             </div>
-            <Button
-              onClick={handleRefresh}
-              variant="outline"
-              disabled={isRefreshing}
-            >
-              <RefreshCw
-                className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleRefresh}
+                variant="outline"
+                disabled={isRefreshing}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+              <Button
+                onClick={handleLogout}
+                variant="outline"
+              >
+                Logout
+              </Button>
+            </div>
           </div>
 
           {/* Orders Table */}
@@ -826,14 +977,16 @@ export default function OrderManagement() {
                               <Button
                                 variant="outline"
                                 size="icon"
-                                onClick={() => handlePrintShippingLabel(order)}
+                                onClick={() =>
+                                  window.open(`/unitizer/${order.id}`, "_blank")
+                                }
                                 className="h-8 w-8"
                               >
                                 <Printer className="h-4 w-4" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Print Shipping Label</p>
+                              <p>Print Unitizer Label</p>
                             </TooltipContent>
                           </Tooltip>
                           <Tooltip>
@@ -842,7 +995,7 @@ export default function OrderManagement() {
                                 variant="outline"
                                 size="icon"
                                 onClick={() =>
-                                  handlePrintCustomsDocuments(order)
+                                  window.open(`/cn38/${order.id}`, "_blank")
                                 }
                                 className="h-8 w-8"
                               >
